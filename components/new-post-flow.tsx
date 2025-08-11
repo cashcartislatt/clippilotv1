@@ -183,6 +183,12 @@ export function NewPostFlow() {
     }
   }, [newPostForm.videoSource])
 
+  useEffect(() => {
+    // Reset form and step on mount (or reload)
+    dispatch({ type: "RESET_NEW_POST_FORM" });
+    dispatch({ type: "SET_NEW_POST_STEP", payload: 1 });
+  }, []);
+
   return (
     <div className="min-h-screen bg-white">
       {/* Show schedule status overlay */}

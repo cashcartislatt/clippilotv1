@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { instagramGetUrl } from "instagram-url-direct";
 import puppeteer from "puppeteer";
 
 export async function GET(req: NextRequest) {
@@ -11,16 +10,19 @@ export async function GET(req: NextRequest) {
   // Normalize Instagram URL (remove query params/fragments)
   const normalizedUrl = url.split("?")[0].split("#")[0];
 
-  // Try Puppeteer scraping first
   try {
-    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'], headless: true });
     const page = await browser.newPage();
-    await page.goto(normalizedUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
-    // Wait for main content
-    await page.waitForSelector('meta[property="og:description"]', { timeout: 10000 });
-    // Try to get caption from meta tag
-    const metaCaption = await page.$eval('meta[property="og:description"]', el => el.getAttribute('content'));
-    let caption = metaCaption || "";
+    await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36");
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
+    await page.goto(normalizedUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
+    // Try to get caption from meta tag first
+    let caption = "";
+    try {
+      await page.waitForSelector('meta[property="og:description"]', { timeout: 10000 });
+      const metaCaption = await page.$eval('meta[property="og:description"]', el => el.getAttribute('content'));
+      caption = metaCaption || "";
+    } catch {}
     // If meta tag fails, try to get from post content
     if (!caption) {
       try {
@@ -30,13 +32,6 @@ export async function GET(req: NextRequest) {
     await browser.close();
     return NextResponse.json({ caption });
   } catch (err: any) {
-    // Fallback to instagram-url-direct if Puppeteer fails
-    try {
-      const info = await instagramGetUrl(url);
-      const caption = info?.post_info?.caption || "";
-      return NextResponse.json({ caption });
-    } catch (err2: any) {
-      return NextResponse.json({ error: err2.message || "Failed to fetch caption" }, { status: 500 });
-    }
+    return NextResponse.json({ error: err.message || "Failed to fetch caption" }, { status: 500 });
   }
 }
