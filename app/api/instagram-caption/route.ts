@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import puppeteer from "puppeteer";
+import chromium from "chrome-aws-lambda";
+import puppeteer from "puppeteer-core";
 
 export async function GET(req: NextRequest) {
   const url = req.nextUrl.searchParams.get("url");
@@ -10,8 +11,14 @@ export async function GET(req: NextRequest) {
   // Normalize Instagram URL (remove query params/fragments)
   const normalizedUrl = url.split("?")[0].split("#")[0];
 
+  let browser = null;
   try {
-    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'], headless: true });
+    browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath,
+      headless: chromium.headless,
+    });
     const page = await browser.newPage();
     await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36");
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
@@ -32,6 +39,7 @@ export async function GET(req: NextRequest) {
     await browser.close();
     return NextResponse.json({ caption });
   } catch (err: any) {
+    if (browser) await browser.close();
     return NextResponse.json({ error: err.message || "Failed to fetch caption" }, { status: 500 });
   }
 }
