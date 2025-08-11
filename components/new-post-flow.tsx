@@ -24,6 +24,7 @@ export function NewPostFlow() {
   const [videoReady, setVideoReady] = useState(false);
   const [showScheduleStatus, setShowScheduleStatus] = useState<null | { success: boolean; message: string }>(null);
   const [selectedChannel, setSelectedChannel] = useState<'channel1' | 'channel2'>('channel1');
+  const [captionLoading, setCaptionLoading] = useState(false);
 
   const steps = ["Upload Video", "Select Platforms", "Edit Video", "Caption & Hashtags", "Schedule", "Review"]
 
@@ -549,15 +550,44 @@ export function NewPostFlow() {
                 </div>
               )}
 
-              {newPostForm.originalCaption && (
+              {/* Instagram Original Caption Block - always show fetch button if Instagram link */}
+              {newPostForm.videoSource && newPostForm.videoSource.includes("instagram.com") && (
                 <div>
                   <Label className="text-base font-medium">Original caption</Label>
                   <Textarea
-                    value={newPostForm.originalCaption}
+                    value={newPostForm.originalCaption || ""}
                     readOnly
                     className="mt-2 mobile-input min-h-[80px] bg-gray-100 text-gray-700"
                     rows={3}
                   />
+                  <Button
+                    variant="outline"
+                    className="mt-2 flex items-center gap-2"
+                    onClick={async () => {
+                      setCaptionLoading(true);
+                      if (newPostForm.videoSource && newPostForm.videoSource.includes("instagram.com")) {
+                        try {
+                          const res = await fetch(`/api/instagram-caption?url=${encodeURIComponent(newPostForm.videoSource)}`);
+                          const data = await res.json();
+                          if (data.caption) {
+                            updateForm({ originalCaption: data.caption });
+                          } else {
+                            updateForm({ originalCaption: "" });
+                          }
+                        } catch (err) {
+                          updateForm({ originalCaption: "" });
+                        }
+                      }
+                      setCaptionLoading(false);
+                    }}
+                    disabled={captionLoading}
+                  >
+                    {captionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    Fetch Caption
+                  </Button>
+                  {captionLoading && (
+                    <p className="text-xs text-gray-500 mt-2">Fetching Instagram caption...</p>
+                  )}
                 </div>
               )}
             </CardContent>
