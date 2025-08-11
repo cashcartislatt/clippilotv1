@@ -6,6 +6,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import axios from "axios";
+import puppeteer from "puppeteer";
 
 // Helper: Download YouTube video
 async function downloadYouTubeVideo(url: string, outputPath: string) {
@@ -17,10 +18,27 @@ async function downloadYouTubeVideo(url: string, outputPath: string) {
   });
 }
 
-// Helper: Download Instagram video
+// Helper: Download Instagram video (Puppeteer-based)
 async function downloadInstagramVideo(url: string, outputPath: string) {
-  const info = await instagramGetUrl(url);
-  const videoUrl = info?.url_list?.[0];
+  // Normalize URL
+  const normalizedUrl = url.split("?")[0].split("#")[0];
+  let videoUrl = "";
+  try {
+    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const page = await browser.newPage();
+    await page.goto(normalizedUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+    // Try to get video URL from meta tag
+    await page.waitForSelector('meta[property="og:video"]', { timeout: 10000 });
+    const metaVideo = await page.$eval('meta[property="og:video"]', el => el.getAttribute('content'));
+    videoUrl = metaVideo || "";
+    await browser.close();
+  } catch (err) {
+    // Fallback to instagram-url-direct if Puppeteer fails
+    try {
+      const info = await instagramGetUrl(url);
+      videoUrl = info?.url_list?.[0];
+    } catch {}
+  }
   if (!videoUrl) throw new Error("No video found at Instagram URL");
   const response = await axios.get(videoUrl, { responseType: "stream" });
   const fileStream = fs.createWriteStream(outputPath);
