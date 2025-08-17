@@ -23,20 +23,44 @@ async function downloadInstagramVideo(url: string, outputPath: string) {
   // Normalize URL
   const normalizedUrl = url.split("?")[0].split("#")[0];
   let videoUrl = "";
+  let metadata = {};
   try {
     const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
     const page = await browser.newPage();
     await page.goto(normalizedUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
-    // Try to get video URL from meta tag
+    // Extract video URL
     await page.waitForSelector('meta[property="og:video"]', { timeout: 10000 });
-    const metaVideo = await page.$eval('meta[property="og:video"]', el => el.getAttribute('content'));
-    videoUrl = metaVideo || "";
+    videoUrl = await page.$eval('meta[property="og:video"]', el => el.getAttribute('content'));
+    // Extract metadata
+    metadata = await page.evaluate(() => {
+      const getMeta = (prop) => {
+        const el = document.querySelector(`meta[property='${prop}']`);
+        return el ? el.getAttribute('content') : "";
+      };
+      const caption = getMeta('og:description');
+      const author = getMeta('instapp:owner_user_id') || document.querySelector('a[role="link"]')?.textContent || "";
+      const videoUrl = getMeta('og:video');
+      const thumbnail = getMeta('og:image');
+      // Try to get likes/comments if available
+      let likes = "";
+      let comments = "";
+      const likeEl = document.querySelector('section span[aria-label*="like"]');
+      if (likeEl) likes = likeEl.textContent;
+      const commentEls = document.querySelectorAll('ul ul li');
+      comments = Array.from(commentEls).map(el => el.textContent).join(' | ');
+      // Post date
+      let postDate = "";
+      const timeEl = document.querySelector('time');
+      if (timeEl) postDate = timeEl.getAttribute('datetime');
+      return { caption, author, videoUrl, thumbnail, likes, comments, postDate };
+    });
     await browser.close();
   } catch (err) {
     // Fallback to instagram-url-direct if Puppeteer fails
     try {
       const info = await instagramGetUrl(url);
       videoUrl = info?.url_list?.[0];
+      metadata = { caption: info?.title || "", videoUrl };
     } catch {}
   }
   if (!videoUrl) throw new Error("No video found at Instagram URL");
@@ -48,7 +72,7 @@ async function downloadInstagramVideo(url: string, outputPath: string) {
     fileStream.on("finish", () => resolve(undefined));
     fileStream.on("error", reject);
   });
-  return outputPath;
+  return { outputPath, metadata };
 }
 
 // Helper: Upload to YouTube Shorts
@@ -104,10 +128,12 @@ export async function POST(req: NextRequest) {
     // 1. Download video
     const ext = ".mp4";
     const tempPath = path.join(os.tmpdir(), `clip_${Date.now()}${ext}`);
+    let metadata = {};
     if (videoLink.includes("youtube.com") || videoLink.includes("youtu.be")) {
       await downloadYouTubeVideo(videoLink, tempPath);
     } else if (videoLink.includes("instagram.com")) {
-      await downloadInstagramVideo(videoLink, tempPath);
+      const result = await downloadInstagramVideo(videoLink, tempPath);
+      metadata = result.metadata;
     } else {
       return NextResponse.json({ error: "Unsupported video source" }, { status: 400 });
     }
@@ -189,6 +215,7 @@ export async function POST(req: NextRequest) {
       youtubeVideoId: uploadRes.id,
       youtubeUrl: `https://youtube.com/shorts/${uploadRes.id}`,
       status: uploadRes.status,
+      instagramMetadata: metadata,
       debug: { tempPath, fileSize }
     });
   } catch (err: any) {
