@@ -28,40 +28,60 @@ async function downloadInstagramVideo(url: string, outputPath: string) {
     const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
     const page = await browser.newPage();
     await page.goto(normalizedUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
-    // Extract video URL
-    await page.waitForSelector('meta[property="og:video"]', { timeout: 10000 });
-    videoUrl = await page.$eval('meta[property="og:video"]', el => el.getAttribute('content'));
+    // Try meta tag first
+    try {
+      await page.waitForSelector('meta[property="og:video"]', { timeout: 5000 });
+  videoUrl = await page.$eval('meta[property="og:video"]', el => el.getAttribute('content') || "");
+    } catch (metaErr) {
+      // Try video tag
+      try {
+        await page.waitForSelector('video', { timeout: 5000 });
+        videoUrl = await page.$eval('video', el => el.src);
+      } catch (videoTagErr) {
+        // Try script blobs
+        const scripts = await page.$$eval('script', els => els.map(e => e.innerHTML));
+        for (const script of scripts) {
+          const match = script.match(/"video_url":"(https:[^\"]+)"/);
+          if (match && match[1]) {
+            videoUrl = match[1].replace(/\\u0026/g, '&');
+            break;
+          }
+        }
+      }
+    }
     // Extract metadata
     metadata = await page.evaluate(() => {
-      const getMeta = (prop) => {
+      const getMeta = (prop: string) => {
         const el = document.querySelector(`meta[property='${prop}']`);
-        return el ? el.getAttribute('content') : "";
+        return el ? el.getAttribute('content') || "" : "";
       };
       const caption = getMeta('og:description');
       const author = getMeta('instapp:owner_user_id') || document.querySelector('a[role="link"]')?.textContent || "";
       const videoUrl = getMeta('og:video');
       const thumbnail = getMeta('og:image');
-      // Try to get likes/comments if available
       let likes = "";
       let comments = "";
       const likeEl = document.querySelector('section span[aria-label*="like"]');
       if (likeEl) likes = likeEl.textContent;
       const commentEls = document.querySelectorAll('ul ul li');
       comments = Array.from(commentEls).map(el => el.textContent).join(' | ');
-      // Post date
       let postDate = "";
       const timeEl = document.querySelector('time');
-      if (timeEl) postDate = timeEl.getAttribute('datetime');
+  if (timeEl) postDate = timeEl.getAttribute('datetime') || "";
       return { caption, author, videoUrl, thumbnail, likes, comments, postDate };
     });
     await browser.close();
+    if (!videoUrl) throw new Error('No video URL found with Puppeteer');
   } catch (err) {
-    // Fallback to instagram-url-direct if Puppeteer fails
+    console.error('Puppeteer failed:', err);
+    // Fallback to instagram-url-direct only if all Puppeteer methods fail
     try {
       const info = await instagramGetUrl(url);
       videoUrl = info?.url_list?.[0];
-      metadata = { caption: info?.title || "", videoUrl };
-    } catch {}
+  metadata = { caption: "", videoUrl };
+    } catch (directErr) {
+      console.error('instagram-url-direct failed:', directErr);
+    }
   }
   if (!videoUrl) throw new Error("No video found at Instagram URL");
   const response = await axios.get(videoUrl, { responseType: "stream" });
